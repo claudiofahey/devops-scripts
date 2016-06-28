@@ -20,7 +20,7 @@ Simple Command Execution on Multiple Hosts using Xargs
 ------------------------------------------------------
 
 There are many tools for executing commands on multiple hosts. However most such tools require
-additional packages to be installed. For quick and dirty tasks, xargs can easily be used and shown below.
+additional packages to be installed. For quick and dirty tasks, xargs can be used.
 
 Setup is extremely easily. Create a text file where each line is the FQDN (fully qualified domain name),
 hostname without domain, or the IP address
