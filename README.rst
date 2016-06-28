@@ -78,7 +78,7 @@ ignore any errors.
 
 .. parsed-literal::
 
-  $ cat master.txt worker.txt | xargs -n 1 -i ssh root@{} yum install -y big_package
+  $ cat master.txt worker.txt | xargs -n 1 -i -P 0 ssh root@{} yum install -y big_package
 
 You can also use SCP to copy files between the local host and the remote hosts.
 
