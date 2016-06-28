@@ -7,11 +7,11 @@ claudio.fahey@emc.com
 
 This repository contains various Python scripts that can be used to automate various devops tasks.
 
-- configue-ssh.py: configure password-less SSH to remote hosts
+- `configure-ssh.py <configure-ssh.py>`_: configure password-less SSH to remote hosts
 
-- mount-nfs.py: permanently mount an NFS export
+- `mount-nfs.py <mount-nfs.py>`_: permanently mount an NFS export
 
-- prepare-data-disks.py: partition, format, and mount each of the specified disks.
+- `prepare-data-disks.py <prepare-data-disks.py>`_: partition, format, and mount each of the specified disks
 
 See the help in each script for usage and examples.
 
