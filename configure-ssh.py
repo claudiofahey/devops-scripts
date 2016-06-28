@@ -13,6 +13,9 @@ Examples:
   %prog -u root host1 host2
     Same as above but it will repeat for host1 and host2.
 
+  %prog -u root $(cat master.txt worker.txt)
+    Same as above but it will repeat for each host listed in the files master.txt and worker.txt.
+
   %prog -u root -p mysecretpassword host1 host2
     To avoid being prompted for a password, specify it with the -p option.
     You must have sshpass installed for this to work.
