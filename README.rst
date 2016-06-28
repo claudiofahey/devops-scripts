@@ -52,7 +52,7 @@ contents of the line which is our FQDN.
 
 To run a command on each host using SSH, use this command.
 Note that you'll need password-less SSH configured or you will be prompted for a password on each connection.
-If you haven't configured password-less SSH, see the script configure-ssh.py in this repository.
+If you haven't configured password-less SSH, see the script `configure-ssh.py` in this repository.
 
 .. parsed-literal::
 
