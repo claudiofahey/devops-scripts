@@ -8,16 +8,16 @@
 Examples:
   %prog /dev/sdb
     This will create a single partition on /dev/sdb, format it using ext4,
-    and then mount it as /grid/0.
+    and then mount it as /dcos/volume0.
 
   %prog /dev/sdb /dev/sdc
-    Same as above but will repeat with /dev/sdc and mount it is /grid/1.
+    Same as above but will repeat with /dev/sdc and mount it is /dcos/volume1.
 
-  %prog -a -m sdb-c
+  %prog -a -m sdb-z
     Automatically discover the disks that match the pattern /dev/sd[b-z],
     then partition, format, and mount them.
 
-  %prog -a -m sdb-c -t
+  %prog -a -m sdb-z -t
     Automatically discover the disks that match the pattern /dev/sd[b-z].
     Prints the list of disks but does not take any action to partition,
     format, or mount the disks. Use the -t option to ensure the list of 
@@ -26,7 +26,7 @@ Examples:
   %prog --help
     View all options.
 
-WARNING! THIS WILL ERASE THE CONTENTS OF THESE DISKS!"""
+WARNING! THIS WILL ERASE THE CONTENTS OF DISKS!"""
 
 import os
 import glob
@@ -54,39 +54,41 @@ def get_disks_to_prepare(discover_method):
         disks = sorted(glob.glob('/dev/vd[b-z]'))
     return disks
 
-def umount_disk(disk_info):
-    disk = disk_info['disk']
-    disk_number = disk_info['disk_number']    
-    print('%s: Umounting disk %d, %s' % (platform.node(), disk_number, disk))
-    os.system('umount %s1' % disk)
+def umount_partitions(part_info):
+    print('%s: Umounting partition %s' % (platform.node(), part_info['part_device']))
+    os.system('umount %s' % part_info['part_device'])
 
 def partition_disk(disk_info):
     disk = disk_info['disk']
     disk_number = disk_info['disk_number']    
-    print('%s: Partitioning disk %d, %s' % (platform.node(), disk_number, disk))
+    part_info = disk_info['part_info']
+    print('%s: Partitioning disk %d, %s, %d partitions' % (platform.node(), disk_number, disk, len(part_info)))
     if True:
         assert os.system('parted -s %s mklabel GPT' % disk) == 0
-        os.system('parted -s %s rm 1' % disk)
-        os.system('parted -s %s rm 2' % disk)
         # Must sleep to avoid errors updating OS partition table.
         sleep(0.2)
-        assert os.system('parted -s -a cylinder %s -- mkpart primary ext4 1 -1' % disk) == 0
+        for pi in part_info:
+            assert os.system('parted -s -a cylinder %s -- mkpart primary ext4 %s %s' % (disk, pi['begin_pct'], pi['end_pct'])) == 0
 
-def format_disk(disk_info):
-    disk = disk_info['disk']
-    disk_number = disk_info['disk_number']    
-    mount = disk_info['mount']    
-    print('%s: Formatting disk %d, %s, %s' % (platform.node(), disk_number, disk, mount))
+def format_partition(part_info):
+    if part_info['skip_format']:
+        return
+    part_device = part_info['part_device']
+    disk_number = part_info['disk_number']    
+    mount = part_info['mount']    
+    print('%s: Formatting partition %s, mount %s, disk %d' % (platform.node(), part_device, mount, disk_number))
     if True:
-        assert os.system('mkfs.ext4 -q -T largefile -m 0 %s1' % disk) == 0
+        assert os.system('mkfs.ext4 -q -T largefile -m 0 %s' % part_device) == 0
 
-def mount_disk(disk_info):
-    disk = disk_info['disk']
-    disk_number = disk_info['disk_number']    
-    mount = disk_info['mount']    
-    print('%s: Mounting disk %d, %s, %s' % (platform.node(), disk_number, disk, mount))
-    assert os.system('mkdir -p /grid/%d' % disk_number) == 0
-    assert os.system('echo %s1\t%s\text4\tdefaults,noatime\t0\t0 >> /etc/fstab' % (disk, mount)) == 0
+def mount_partitions(part_info):
+    part_device = part_info['part_device']
+    disk_number = part_info['disk_number']    
+    mount = part_info['mount']    
+    if not mount:
+        return
+    print('%s: Mounting partition %s, mount %s, disk %d' % (platform.node(), part_device, mount, disk_number))
+    assert os.system('mkdir -p %s' % mount) == 0
+    assert os.system('echo %s\t%s\text4\tdefaults,noatime\t0\t0 >> /etc/fstab' % (part_device, mount)) == 0
     assert os.system('mount %s' % mount) == 0
 
 def main():
@@ -101,24 +103,60 @@ def main():
         help='show disks that will be prepared but do not prepare them')
     parser.add_option('-n', '--disk-count', action='store', dest='disk_count', type='int',
         help='ensure there are exactly this many disks to prepare')    
+    parser.add_option('-p', '--partitions', action='store', dest='partitions_per_disk', type='int', default=1,
+        help='create this many partitions per disk')    
+    parser.add_option('', '--mount-prefix', action='store', dest='mount_prefix', default="/dcos/volume",
+        help='partitions will be mounted using this prefix')    
+    parser.add_option('', '--unmount-only', action='store_true', dest='unmount_only',
+        help='only unmount partitions')    
+    parser.add_option('', '--skip-format', action='store_true', dest='skip_format',
+        help='skip formatting new partitions')    
+    parser.add_option('', '--skip-mount', action='store_true', dest='skip_mount',
+        help='skip mounting new partitions')    
     options, args = parser.parse_args()
     disks = args
 
-    # Get list of disk partitions to format and mount.
+    # Get list of disks to format and mount.
     if options.auto:
         disks += get_disks_to_prepare(discover_method=options.discover_method)
 
     if options.exclude:
         disks = [d for d in disks if d not in options.exclude]
 
-    disk_info = [{
-        'disk_number': disk_number,     # First disk will be 0
-        'disk': disk,
-        'mount': '/grid/%d' % disk_number
-        } for disk_number, disk in enumerate(disks)]
+    if len(disks) == 0:
+        parser.error("No disks available")
+
+    part_index = 0
+    part_info = []
+    disk_info = []
+    for disk_number, disk in enumerate(disks):
+        di = {
+            'disk_number': disk_number,     # First disk will be 0
+            'disk': disk,
+            'part_info': [],
+        }
+        for part_number in range(options.partitions_per_disk):
+            pi = {
+                'part_index': part_index,
+                'part_number': part_number,
+                'part_device': '%s%d' % (disk, part_number + 1),
+                'begin_pct': '%d%%' % int(100 * part_number / options.partitions_per_disk),
+                'end_pct': '%d%%' % int(100 * (part_number + 1) / options.partitions_per_disk),
+                'skip_format': options.skip_format,
+                'mount': '' if options.skip_mount else '%s%d' % (options.mount_prefix, part_index),
+                'disk_number': disk_number,
+                'disk': disk,
+            }
+            part_info = part_info + [pi]
+            di['part_info'] = di['part_info'] + [pi]
+            part_index += 1
+        disk_info = disk_info + [di]
 
     print('The following %d disks will be erased:' % len(disks))
     print('  ' + '\n  '.join(disks))
+
+    print('The following %d partitions will be created:' % len(part_info))
+    print('  ' + '\n  '.join(['%s mounted on %s, %s to %s' % (pi['part_device'], pi['mount'], pi['begin_pct'], pi['end_pct']) for pi in part_info]))
 
     if options.disk_count:
         assert len(disks) == options.disk_count
@@ -126,23 +164,24 @@ def main():
     if options.test:
         return 0
 
-    assert os.system('mkdir -p /grid') == 0
+    # Remove existing mounts from fstab.
+    assert os.system('egrep -v "%s" /etc/fstab > /tmp/fstab ; cp /tmp/fstab /etc/fstab' % options.mount_prefix) == 0
 
-    # Remove /grid mounts from fstab.
-    assert os.system('egrep -v "/grid/" /etc/fstab > /tmp/fstab ; cp /tmp/fstab /etc/fstab') == 0
+    map(umount_partitions, part_info)
 
-    map(umount_disk, disk_info)
-    map(partition_disk, disk_info)
-    map(umount_disk, disk_info)
+    if not options.unmount_only:
+        map(partition_disk, disk_info)
+        map(umount_partitions, part_info)
 
-    # Format all disks in parallel.
-    pool = multiprocessing.Pool(len(disks))
-    pool.map(format_disk, disk_info)
-    print('Format done.')
+        # Format all disks in parallel.
+        pool = multiprocessing.Pool(len(part_info))
+        pool.map(format_partition, part_info)
+        print('Format done.')
 
-    map(mount_disk, disk_info)
+        map(mount_partitions, part_info)
 
-    assert os.system('mount | grep /grid/') == 0
+        if not options.skip_mount:
+            assert os.system('mount | grep %s' % options.mount_prefix) == 0
 
     print('%s: prepare_data_disks complete.' % platform.node())
 
