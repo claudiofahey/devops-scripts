@@ -171,6 +171,9 @@ def main():
 
     if not options.unmount_only:
         map(partition_disk, disk_info)
+        
+        # Must sleep to allow new partitions to get mounted so that we can unmount them.
+        sleep(1.0)
         map(umount_partitions, part_info)
 
         # Format all disks in parallel.
